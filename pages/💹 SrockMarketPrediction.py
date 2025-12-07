@@ -1,213 +1,172 @@
 import streamlit as st
-from pyspark.sql import SparkSession
-from pyspark.sql.types import StructType
-from pyspark.sql.functions import *
-from pyspark.ml.regression import LinearRegression
+import pandas as pd
+import numpy as np
+from sklearn.linear_model import LinearRegression
 import matplotlib.pyplot as plt
 import datetime
 import time
+import json
 
 st.title('Stock Market Prediction')
 
-#Initializing Spark Session
-st.header("Initializing a Spark Session")
-data_load_state = st.text('Starting Session...')
-spark = SparkSession.builder.master("local").appName("Stock Market Prediction").getOrCreate()
-sc = spark.sparkContext
-data_load_state.text("Done!")
-st.write(sc.version)
-st.write(sc.appName)
-# st.write(sc.uiWebUrl)
-st.write("http://134.209.242.40:4040")
-st.write(sc.master)
-# st.markdown(result)
+# Load JSON data
+@st.cache_data
+def load_json_data():
+    with open('./Stock_Data.json', 'r') as f:
+        data = json.load(f)
+    return data
 
-def preload(Symbol):
-	df = spark.read.json('hdfs://hadoop-master:9000/StockPrediction/Stock_Data.json', multiLine=True)
-	symbols = df.columns
-	# Select the "name" column
-	name_column = df.select(Symbol)
-	# Collect the values of the "name" column as a list of Row objects
-	name_values = name_column.collect()
-	# print(name_values)
-	row = name_values[0].asDict()
-	# print(name_values) # Prints the list of Row objects
-	final = row[Symbol].asDict()
-	return final, symbols
+data_json = load_json_data()
 
-# @st.cache
 def Load_data_json(Symbol):
-	final, symbols = preload(Symbol)
-	final_columns = ['Date', 'Open', 'High', 'Low', 'Close', 'Volume']
-	def create_data(final):
-		data = []
-		for i in range(len(final["Date"])):
-			data.append((final["Date"][i], final["Price History"]["open"][i],final["Price History"]["high"][i],final["Price History"]["low"][i], final["Price History"]["close"][i], final["volume"][i]))
-		return data
-	data = create_data(final)
-	# print(data[0])
-	final_df = spark.createDataFrame(data, final_columns)
-	final_df = final_df.withColumn('Date', to_date(final_df['date'], 'yyyy-MM-dd'))
-	return final_df, symbols
+    """Load stock data for a given symbol"""
+    stock = data_json[Symbol]
+    
+    # Create DataFrame
+    dates = stock["Date"]
+    opens = stock["Price History"]["open"]
+    highs = stock["Price History"]["high"]
+    lows = stock["Price History"]["low"]
+    closes = stock["Price History"]["close"]
+    volumes = stock["volume"]
+    
+    df = pd.DataFrame({
+        'Date': pd.to_datetime(dates),
+        'Open': pd.to_numeric(opens, errors='coerce'),
+        'High': pd.to_numeric(highs, errors='coerce'),
+        'Low': pd.to_numeric(lows, errors='coerce'),
+        'Close': pd.to_numeric(closes, errors='coerce'),
+        'Volume': pd.to_numeric(volumes, errors='coerce')
+    })
+    
+    df = df.sort_values('Date').reset_index(drop=True)
+    return df
 
 def InfoComp(Symbol):
-	final, _ = preload(Symbol)
-	# Get Company Infos
-	stock_info = {key: final[key] for key in ("Name", "Founder", 'Date of Birth', 'Industry', 'Market Value')}
-	return stock_info
+    """Get company information"""
+    stock = data_json[Symbol]
+    stock_info = {
+        'Name': stock.get('Name', 'N/A'),
+        'Founder': stock.get('Founder', 'N/A'),
+        'Date of Birth': stock.get('Date of Birth', 'N/A'),
+        'Industry': stock.get('Industry', 'N/A'),
+        'Market Value': stock.get('Market Value', 'N/A')
+    }
+    return stock_info
 
-
-def Describe_Table(data):
-	result = data.describe()
-	result = result.select(result['summary'],
-				format_number(result['Open'].cast('float'),2).alias('Open'),
-				format_number(result['High'].cast('float'),2).alias('High'),
-				format_number(result['Low'].cast('float'),2).alias('Low'),
-				format_number(result['Close'].cast('float'),2).alias('Close'),
-				result['Volume'].cast('float').alias('Volume')
-				)
-	return result
-
-# symbols = ["GOOGL", "AAPL", "AMZN", "MSFT", "META", "V", "INTC", "MA", "ORCL", "TSLA", "NFLX", "DIS", "MCD", "KO", "IBM", "CSCO", "AMD", "EA", "ABNB", "ACN", "ACN", "ADBE", "PYPL", "NVDA", "CRM", "UBER", "ATVI", "WMT", "SHOP"]
-_ ,symbols = Load_data_json("GOOGL")
+# Get list of available symbols
+symbols = list(data_json.keys())
 
 # Create the dropdown menu
 st.subheader("Select Company Symbol")
 selected_company = st.selectbox('', symbols)
 
-# Display the selected string
-# st.write('You selected:', selected_company)
-
+# Progress bar
 my_bar = st.progress(0)
 data_load_state = st.text('Loading data...')
-data, _ = Load_data_json(selected_company)
 
-
+# Load data
+data = Load_data_json(selected_company)
 
 for percent_complete in range(100):
-	time.sleep(0.03)
-	my_bar.progress(percent_complete + 1)
+    time.sleep(0.01)
+    my_bar.progress(percent_complete + 1)
 
-# Create a text element and let the reader know the data is loading.
-# Load 10,000 rows of data into the dataframe.
-# Notify the reader that the data was successfully loaded.
 if percent_complete == 99:
-	st.success(f'Data Loaded !', icon="✅")
-	# data_load_state = st.text('Done !...')
+    st.success(f'Data Loaded !', icon="✅")
+    my_bar.empty()
+    data_load_state.empty()
 
-
-
-# if st.checkbox('Show raw data'):
+# Display data
 st.dataframe(data)
 
 # Information about the company
-
 st.subheader("Info About the company")
 st.write(InfoComp(selected_company))
 
+# Statistics
 st.subheader("Calculating data statistics")
+st.dataframe(data.describe())
 
-result = Describe_Table(data)
+# Prepare data for machine learning
+st.subheader("Creating Training Data Features:")
 
-st.dataframe(result)
+# Create features (Open, High, Low) to predict Close
+X = data[['Open', 'High', 'Low']].values
+y = data['Close'].values
+dates = data['Date'].values
 
-from pyspark.ml.linalg import Vectors
-from pyspark.ml.feature import VectorAssembler
+# Split data into training and testing (75% train, 25% test)
+split_point = int(len(data) * 0.75)
+X_train = X[:split_point]
+y_train = y[:split_point]
+X_test = X[split_point:]
+y_test = y[split_point:]
+dates_train = dates[:split_point]
+dates_test = dates[split_point:]
 
-featureassembler = VectorAssembler(inputCols=["Open","High","Low"],outputCol="Features")
-output = featureassembler.transform(data)
+# Train the model
+regressor = LinearRegression()
+regressor.fit(X_train, y_train)
 
-st.subheader("Creating Traing data Features :")
-st.dataframe(output)
-output.show()
+# Make predictions
+y_pred = regressor.predict(X_test)
 
-finilized_data = output.select("Date","Features","Close").sort("Date",ascending=True)
+# Display prediction results
+st.subheader(f"Model Performance for {selected_company}:")
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 
-n_rows = finilized_data.count()
+mse = mean_squared_error(y_test, y_pred)
+mae = mean_absolute_error(y_test, y_pred)
+r2 = r2_score(y_test, y_pred)
 
+col1, col2, col3 = st.columns(3)
+col1.metric("R² Score", f"{r2:.4f}")
+col2.metric("Mean Squared Error", f"{mse:.4f}")
+col3.metric("Mean Absolute Error", f"{mae:.4f}")
 
-# # Calculate the split point
-split_point = int(n_rows * 0.75)
-train_data = finilized_data.limit(split_point)
-finilized_data_desc = finilized_data.orderBy(finilized_data["Date"].desc())
-
-
-
-
-if st.checkbox('Predict For 2023'):
-	schema = StructType().add("Date",'date').add("Open",'float').add("High",'float').add("Low",'float').add("Close",'float').add("Adj Close", 'float').add("Volume",'float')
-	test_data = spark.read.csv('hdfs://hadoop-master:9000/StockPrediction/2023Test.csv',schema=schema,header=True,multiLine=True)
-	output2 = featureassembler.transform(test_data)
-	finilized_data2 = output2.select("Date","Features","Close").sort("Date",ascending=True)
-	test_data = finilized_data2
-	st.dataframe(test_data)
-else:
-	test_data = finilized_data_desc.limit(n_rows - split_point)
-	test_data = test_data.orderBy(test_data["Date"].asc())
-
-
-
-regressor = LinearRegression(featuresCol="Features", labelCol="Close")
-regressor = regressor.fit(train_data)
-
-pred = regressor.transform(test_data)
-pred.select("Date","Features","Close","Prediction").show()
-pred.count()
-
-dates_ = finilized_data.select("Date").toPandas()
-dates_ = dates_.values
-close_ = finilized_data.select("Close").toPandas()
-close_ = close_.values
-preds = pred.select("Prediction").toPandas()
-preds = preds.values
-dates_preds = pred.select("Date").toPandas()
-dates_preds = dates_preds.values
-
-
+# Plot historical stock prices
 st.subheader(f"Stock Market History for {selected_company}:")
 fig, ax = plt.subplots(figsize=(16, 8))
-
-# Plot data1 and data2 on the subplot, with dates as the x-values
-ax.plot(dates_, close_, label="Close")
-
+ax.plot(dates, y, label="Close Price", linewidth=2)
 plt.legend()
-
-# Set the x-axis label to "Date"
 ax.set_xlabel("Date")
-
-# Set the y-axis label to "Value"
-ax.set_ylabel("Dollar Us")
-
-# Show the plot
+ax.set_ylabel("Dollar US")
+ax.grid(True, alpha=0.3)
 st.pyplot(fig)
 
-import matplotlib.dates as mdates
-import datetime
-
-st.subheader(f"Stock Market {selected_company} Prediction :")
+# Plot predictions
+st.subheader(f"Stock Market {selected_company} Prediction:")
 fig2, ax2 = plt.subplots(figsize=(16, 8))
 
-# Plot data1 and data2 on the subplot, with dates as the x-values
-ax2.plot(dates_, close_, label="Close")
-ax2.plot(dates_preds, preds, label="Prediction")
+# Plot actual prices
+ax2.plot(dates, y, label="Actual Close Price", linewidth=2, color='blue')
+
+# Plot predictions
+ax2.plot(dates_test, y_pred, label="Predicted Price", linewidth=2, color='red', linestyle='--')
 
 plt.legend()
 
-date_start = d = st.date_input("Start Date",datetime.date(2020, 10, 1))
+# Date range selector
+date_start = st.date_input("Start Date", datetime.date(2018, 1, 1))
+date_end = st.date_input("End Date", datetime.date(2023, 12, 30))
 
-date_end = d = st.date_input("End Date",datetime.date(2023, 12, 30))
-
-
+import matplotlib.dates as mdates
 ax2.set_xlim(mdates.date2num([date_start, date_end]))
 
-
-# ax2.xaxis.set_major_formatter(mdates.DateFormatter("%Y-%m-%d"))
-
-# Set the x-axis label to "Date"
 ax2.set_xlabel("Date")
+ax2.set_ylabel("Dollar US")
+ax2.grid(True, alpha=0.3)
 
-# Set the y-axis label to "Value"
-ax2.set_ylabel("Dollar Us")
-
-# Show the plot
 st.pyplot(fig2)
+
+# Show prediction dataframe
+st.subheader("Prediction Details:")
+pred_df = pd.DataFrame({
+    'Date': dates_test,
+    'Actual Close': y_test,
+    'Predicted Close': y_pred,
+    'Difference': y_test - y_pred,
+    'Error %': ((y_test - y_pred) / y_test * 100)
+})
+st.dataframe(pred_df)
