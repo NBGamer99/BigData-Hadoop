@@ -1,8 +1,9 @@
-keras==2.11.0
-matplotlib==3.6.2
-numpy==1.24.1
-pandas==1.5.3
-plotly==5.11.0
-scikit-learn==1.2.0
-streamlit==1.28.0
-tensorflow==2.11.0
+# Modern versions compatible with Python 3.12
+keras>=2.15.0
+matplotlib>=3.8.0
+numpy>=1.26.0
+pandas>=2.0.0
+plotly>=5.18.0
+scikit-learn>=1.4.0
+streamlit==1.28.0  # Keep if you need this specific version
+tensorflow>=2.15.0

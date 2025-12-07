@@ -88,16 +88,54 @@ st.write(InfoComp(selected_company))
 st.subheader("Calculating data statistics")
 st.dataframe(data.describe())
 
-# Prepare data for machine learning
+# Prepare data for machine learning - PROPER TIME SERIES PREDICTION
 st.subheader("Creating Training Data Features:")
 
-# Create features (Open, High, Low) to predict Close
-X = data[['Open', 'High', 'Low']].values
-y = data['Close'].values
-dates = data['Date'].values
+st.info("""
+**📊 Prediction Strategy**: Using past 5 days of closing prices to predict the next day's closing price.
+This is realistic because we only use historical data available at the time of prediction.
+""")
+
+# Create lagged features - use past data to predict future
+def create_lagged_features(df, n_lags=5):
+    """Create features using past n days to predict next day"""
+    df_lagged = df.copy()
+
+    # Create lagged features (previous days' prices)
+    for i in range(1, n_lags + 1):
+        df_lagged[f'Close_Lag{i}'] = df_lagged['Close'].shift(i)
+        df_lagged[f'Volume_Lag{i}'] = df_lagged['Volume'].shift(i)
+
+    # Create technical indicators
+    df_lagged['Price_Change'] = df_lagged['Close'].pct_change()
+    df_lagged['Moving_Avg_5'] = df_lagged['Close'].rolling(window=5).mean()
+    df_lagged['Moving_Avg_20'] = df_lagged['Close'].rolling(window=20).mean()
+    df_lagged['Volatility'] = df_lagged['Close'].rolling(window=5).std()
+
+    # Target: Next day's close price
+    df_lagged['Target'] = df_lagged['Close'].shift(-1)
+
+    # Drop rows with NaN values
+    df_lagged = df_lagged.dropna()
+
+    return df_lagged
+
+# Create lagged dataset
+data_lagged = create_lagged_features(data, n_lags=5)
+
+# Show sample of features
+st.write("**Sample of engineered features:**")
+feature_cols = [col for col in data_lagged.columns if 'Lag' in col or 'Moving_Avg' in col or 'Volatility' in col]
+st.dataframe(data_lagged[['Date'] + feature_cols[:5] + ['Target']].head(10))
+
+# Prepare features and target
+feature_columns = [col for col in data_lagged.columns if col not in ['Date', 'Open', 'High', 'Low', 'Close', 'Volume', 'Target']]
+X = data_lagged[feature_columns].values
+y = data_lagged['Target'].values
+dates = data_lagged['Date'].values
 
 # Split data into training and testing (75% train, 25% test)
-split_point = int(len(data) * 0.75)
+split_point = int(len(X) * 0.75)
 X_train = X[:split_point]
 y_train = y[:split_point]
 X_test = X[split_point:]
@@ -105,68 +143,155 @@ y_test = y[split_point:]
 dates_train = dates[:split_point]
 dates_test = dates[split_point:]
 
+st.write(f"**Training samples:** {len(X_train)} | **Testing samples:** {len(X_test)}")
+
 # Train the model
 regressor = LinearRegression()
 regressor.fit(X_train, y_train)
 
 # Make predictions
+y_pred_train = regressor.predict(X_train)
 y_pred = regressor.predict(X_test)
+
+# Show feature importance
+st.write("**Top 5 Most Important Features:**")
+feature_importance = pd.DataFrame({
+    'Feature': feature_columns,
+    'Coefficient': np.abs(regressor.coef_)
+}).sort_values('Coefficient', ascending=False).head(5)
+st.dataframe(feature_importance)
 
 # Display prediction results
 st.subheader(f"Model Performance for {selected_company}:")
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 
+# Calculate metrics for test set
 mse = mean_squared_error(y_test, y_pred)
 mae = mean_absolute_error(y_test, y_pred)
 r2 = r2_score(y_test, y_pred)
+mape = np.mean(np.abs((y_test - y_pred) / y_test)) * 100
 
-col1, col2, col3 = st.columns(3)
+# Calculate average price for context
+avg_price = np.mean(y_test)
+
+col1, col2, col3, col4 = st.columns(4)
 col1.metric("R² Score", f"{r2:.4f}")
-col2.metric("Mean Squared Error", f"{mse:.4f}")
-col3.metric("Mean Absolute Error", f"{mae:.4f}")
+col2.metric("MAE", f"${mae:.2f}")
+col3.metric("MAPE", f"{mape:.2f}%")
+col4.metric("Avg Price", f"${avg_price:.2f}")
+
+st.write(f"""
+**Interpretation:**
+- R² Score ({r2:.4f}): Explains {r2*100:.1f}% of price variance (realistic for stock prediction)
+- MAE ({mae:.2f}): Average prediction error is {mae:.2f} per share
+- MAPE ({mape:.2f}%): Average error is {mape:.2f}% of actual price
+""")
+
+if r2 > 0.95:
+    st.warning("⚠️ R² > 0.95 might indicate data leakage. Stock markets are inherently unpredictable!")
+elif r2 > 0.5:
+    st.success("✅ Good model performance for stock prediction!")
+else:
+    st.info("ℹ️ Stock prices are difficult to predict. This is normal for financial data.")
 
 # Plot historical stock prices
 st.subheader(f"Stock Market History for {selected_company}:")
 fig, ax = plt.subplots(figsize=(16, 8))
-ax.plot(dates, y, label="Close Price", linewidth=2)
+ax.plot(data['Date'].values, data['Close'].values, label="Historical Close Price", linewidth=2, color='blue')
 plt.legend()
 ax.set_xlabel("Date")
-ax.set_ylabel("Dollar US")
+ax.set_ylabel("Price (USD)")
 ax.grid(True, alpha=0.3)
 st.pyplot(fig)
 
-# Plot predictions
-st.subheader(f"Stock Market {selected_company} Prediction:")
+# Plot predictions vs actual
+st.subheader(f"Stock Market {selected_company} - Prediction vs Actual:")
+
+# Create figure with training and testing regions
 fig2, ax2 = plt.subplots(figsize=(16, 8))
 
-# Plot actual prices
-ax2.plot(dates, y, label="Actual Close Price", linewidth=2, color='blue')
+# Plot training data
+ax2.plot(dates_train, y_train, label="Training Data (Actual)", linewidth=2, color='blue', alpha=0.7)
 
-# Plot predictions
-ax2.plot(dates_test, y_pred, label="Predicted Price", linewidth=2, color='red', linestyle='--')
+# Plot test actual prices
+ax2.plot(dates_test, y_test, label="Test Data (Actual)", linewidth=2, color='green')
 
-plt.legend()
+# Plot predictions (only for test period)
+ax2.plot(dates_test, y_pred, label="Predicted Prices", linewidth=2, color='red', linestyle='--')
+
+# Add vertical line to separate train/test
+if len(dates_train) > 0:
+    ax2.axvline(x=dates_train[-1], color='gray', linestyle=':', linewidth=2, label='Train/Test Split')
+
+plt.legend(loc='best')
 
 # Date range selector
-date_start = st.date_input("Start Date", datetime.date(2018, 1, 1))
-date_end = st.date_input("End Date", datetime.date(2023, 12, 30))
+col1, col2 = st.columns(2)
+with col1:
+    date_start = st.date_input("Start Date", datetime.date(2018, 1, 1))
+with col2:
+    date_end = st.date_input("End Date", datetime.date(2023, 12, 30))
 
 import matplotlib.dates as mdates
 ax2.set_xlim(mdates.date2num([date_start, date_end]))
 
 ax2.set_xlabel("Date")
-ax2.set_ylabel("Dollar US")
+ax2.set_ylabel("Price (USD)")
+ax2.set_title(f"{selected_company} - Next-Day Price Predictions")
 ax2.grid(True, alpha=0.3)
 
 st.pyplot(fig2)
 
+# Prediction accuracy over time
+st.subheader("Prediction Error Over Time:")
+fig3, ax3 = plt.subplots(figsize=(16, 6))
+
+prediction_errors = y_test - y_pred
+ax3.plot(dates_test, prediction_errors, label="Prediction Error", linewidth=1.5, color='purple')
+ax3.axhline(y=0, color='black', linestyle='-', linewidth=0.5)
+ax3.fill_between(dates_test, prediction_errors, 0, alpha=0.3, color='purple')
+
+ax3.set_xlabel("Date")
+ax3.set_ylabel("Error (USD)")
+ax3.set_title("Prediction Error = Actual - Predicted")
+ax3.grid(True, alpha=0.3)
+plt.legend()
+
+st.pyplot(fig3)
+
 # Show prediction dataframe
-st.subheader("Prediction Details:")
+st.subheader("Prediction Details (Test Period):")
 pred_df = pd.DataFrame({
     'Date': dates_test,
     'Actual Close': y_test,
     'Predicted Close': y_pred,
-    'Difference': y_test - y_pred,
-    'Error %': ((y_test - y_pred) / y_test * 100)
+    'Difference ($)': y_test - y_pred,
+    'Error %': np.abs((y_test - y_pred) / y_test * 100),
+    'Correct Direction': ['✅' if (i > 0 and (y_test[idx] > y_test[max(0, idx-1)])) or (i < 0 and (y_test[idx] < y_test[max(0, idx-1)])) else '❌'
+                          for idx, i in enumerate(y_pred - y_test)]
 })
-st.dataframe(pred_df)
+
+# Format the dataframe
+pred_df_display = pred_df.copy()
+pred_df_display['Actual Close'] = pred_df_display['Actual Close'].apply(lambda x: f'${x:.2f}')
+pred_df_display['Predicted Close'] = pred_df_display['Predicted Close'].apply(lambda x: f'${x:.2f}')
+pred_df_display['Difference ($)'] = pred_df_display['Difference ($)'].apply(lambda x: f'${x:+.2f}')
+pred_df_display['Error %'] = pred_df_display['Error %'].apply(lambda x: f'{x:.2f}%')
+
+st.dataframe(pred_df_display.tail(20))
+
+# Summary statistics
+st.subheader("Prediction Summary:")
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.metric("Best Prediction Error", f"${np.min(np.abs(y_test - y_pred)):.2f}")
+with col2:
+    st.metric("Worst Prediction Error", f"${np.max(np.abs(y_test - y_pred)):.2f}")
+with col3:
+    st.metric("Median Error", f"${np.median(np.abs(y_test - y_pred)):.2f}")
+
+st.info("""
+**📌 Note**: This model predicts the **next day's closing price** using the past 5 days of data.
+Stock prices are inherently difficult to predict due to market volatility, news events, and other factors.
+This model is for educational purposes and should not be used for actual trading decisions.
+""")
