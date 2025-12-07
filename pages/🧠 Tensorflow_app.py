@@ -121,7 +121,7 @@ if os.path.exists(model_path):
     st.success('Pre-trained model loaded successfully!')
 else:
     st.warning('Pre-trained model not found. Training a new model... This may take a few minutes.')
-    
+
     # Building the Model
     model = Sequential()
     model.add(LSTM(units=50, activation='relu', return_sequences=True, input_shape=(x_train.shape[1], 1)))
@@ -133,21 +133,21 @@ else:
     model.add(LSTM(units=120, activation='relu'))
     model.add(Dropout(0.5))
     model.add(Dense(units=1))
-    
+
     # Compile and train the model
     model.compile(optimizer='adam', loss='mean_squared_error')
-    
+
     # Show training progress
     progress_bar = st.progress(0)
     status_text = st.empty()
-    
+
     # Train with fewer epochs for demo purposes
     epochs = 20
     for epoch in range(epochs):
         model.fit(x_train, y_train, epochs=1, verbose=0)
         progress_bar.progress((epoch + 1) / epochs)
         status_text.text(f'Training: Epoch {epoch + 1}/{epochs}')
-    
+
     # Save the model
     model.save(model_path)
     st.success('Model trained and saved successfully!')

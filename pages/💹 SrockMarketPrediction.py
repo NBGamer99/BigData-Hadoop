@@ -21,7 +21,7 @@ data_json = load_json_data()
 def Load_data_json(Symbol):
     """Load stock data for a given symbol"""
     stock = data_json[Symbol]
-    
+
     # Create DataFrame
     dates = stock["Date"]
     opens = stock["Price History"]["open"]
@@ -29,7 +29,7 @@ def Load_data_json(Symbol):
     lows = stock["Price History"]["low"]
     closes = stock["Price History"]["close"]
     volumes = stock["volume"]
-    
+
     df = pd.DataFrame({
         'Date': pd.to_datetime(dates),
         'Open': pd.to_numeric(opens, errors='coerce'),
@@ -38,7 +38,7 @@ def Load_data_json(Symbol):
         'Close': pd.to_numeric(closes, errors='coerce'),
         'Volume': pd.to_numeric(volumes, errors='coerce')
     })
-    
+
     df = df.sort_values('Date').reset_index(drop=True)
     return df
 
